@@ -17,6 +17,12 @@ def inspect_topology_and_features(
 ) -> dict:
     """Inspect program ECUs and feature requirements from ground-truth CSVs.
 
+    Use ONLY when the user asks a pure informational question about ECU
+    topology or feature definitions without requesting rig matching or slot
+    availability. Do NOT call this before `match_rigs_by_criteria`, because
+    `match_rigs_by_criteria` already inspects feature requirements and program
+    topology internally.
+
     Args:
         feature_name: Optional feature identifier, for example FEATURE_1.
         vehicle_program: Optional vehicle program identifier to narrow results.

@@ -22,6 +22,10 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash").strip()
 if not GEMINI_MODEL:
     raise ValueError("GEMINI_MODEL must not be empty.")
+GEMINI_THINKING_BUDGET_RAW = os.environ.get("GEMINI_THINKING_BUDGET", "").strip()
+GEMINI_THINKING_BUDGET: int | None = (
+    int(GEMINI_THINKING_BUDGET_RAW) if GEMINI_THINKING_BUDGET_RAW else None
+)
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "gemini").strip().casefold()
 if LLM_PROVIDER not in {"gemini", "ollama"}:
     raise ValueError("LLM_PROVIDER must be either 'gemini' or 'ollama'.")
@@ -45,11 +49,13 @@ ACTIVE_MODEL = GEMINI_MODEL if LLM_PROVIDER == "gemini" else OLLAMA_MODEL
 
 logger.info(
     "Settings loaded: project_root=%s data_raw_dir=%s llm_provider=%s "
-    "active_model=%s api_key_configured=%s ollama_base_url=%s log_file=%s",
+    "active_model=%s gemini_thinking_budget=%s api_key_configured=%s "
+    "ollama_base_url=%s log_file=%s",
     PROJECT_ROOT,
     DATA_RAW_DIR,
     LLM_PROVIDER,
     ACTIVE_MODEL,
+    GEMINI_THINKING_BUDGET,
     bool(GEMINI_API_KEY),
     OLLAMA_BASE_URL,
     get_log_file_path(),

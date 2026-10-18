@@ -9,7 +9,12 @@ from google.genai import types
 
 from src.agent.ollama_provider import OllamaProvider
 from src.agent.tools.registry import get_registered_tools
-from src.config.settings import ACTIVE_MODEL, GEMINI_API_KEY, LLM_PROVIDER
+from src.config.settings import (
+    ACTIVE_MODEL,
+    GEMINI_API_KEY,
+    GEMINI_THINKING_BUDGET,
+    LLM_PROVIDER,
+)
 from src.utils.benchmarking import mark_benchmark
 from src.utils.logging_config import get_logger
 
@@ -144,12 +149,18 @@ class AgentOrchestrator:
             len(user_message),
             len(history),
         )
+        config_options: dict[str, Any] = {}
+        if GEMINI_THINKING_BUDGET is not None:
+            config_options["thinking_config"] = types.ThinkingConfig(
+                thinking_budget=GEMINI_THINKING_BUDGET
+            )
         config = types.GenerateContentConfig(
             tools=get_registered_tools(),
             system_instruction=self.system_instruction,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(
                 disable=False
             ),
+            **config_options,
         )
         mark_benchmark(
             benchmark,

@@ -191,16 +191,16 @@ def _append_booking_history_notice(
     slot_type: str,
 ) -> None:
     """Add a confirmed booking event to the active agent conversation."""
-    booking_lines = [
-        (
-            f"- {booking_id}: {booking['rig_id']} on {booking['date']} "
-            f"{booking['start_time']}-{booking['end_time']}"
+    booking_lines = []
+    for booking_id, booking in zip(booking_ids, bookings):
+        booking_lines.append(
+            f"- booking_id={booking_id}, rig_id={booking['rig_id']}, "
+            f"date={booking['date']}, start_time={booking['start_time']}, "
+            f"end_time={booking['end_time']}, selected_type={slot_type}"
         )
-        for booking_id, booking in zip(booking_ids, bookings)
-    ]
     notice = (
         "System Notice (confirmed booking state from the application): "
-        f"Booking was successfully persisted with Slot_Type={slot_type}. "
+        f"Booking was successfully persisted with selected_type={slot_type}. "
         "These intervals are now occupied and must not be offered as available:\n"
         + "\n".join(booking_lines)
     )

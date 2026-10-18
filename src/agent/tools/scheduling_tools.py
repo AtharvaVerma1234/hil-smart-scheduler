@@ -44,6 +44,13 @@ def find_available_slots(
         shift_start = settings.get("shift_start", shift_start)
     if shift_end == "18:00":
         shift_end = settings.get("shift_end", shift_end)
+    matched_ids = [
+        str(r.get("rig_id", r.get("Rig_ID", "")))
+        for r in st.session_state.get("matched_rigs", [])
+        if r.get("rig_id") or r.get("Rig_ID")
+    ]
+    if matched_ids and set(rig_ids).issubset(matched_ids):
+        rig_ids = list(dict.fromkeys([*rig_ids, *matched_ids]))
     result = SlotSchedulerService(CSVHILRepository()).find_free_slots(
         rig_ids=rig_ids,
         start_date=start_date,
@@ -84,6 +91,12 @@ def stage_filtered_slots_for_ui(
     slot_type: Optional[str] = None,
 ) -> dict:
     """Refresh UI candidates after a user narrows rigs or schedule preferences.
+
+    Call this ONLY on follow-up turns AFTER initial discovery when the user
+    narrows down specific rig IDs, sets a new deadline, enables extended hours,
+    allows weekends, or specifies a slot_type. NEVER call this in the same turn
+    as `find_available_slots`, because `find_available_slots` already stages
+    candidate slots into the UI.
 
     Args:
         rig_ids: Rig identifiers to keep in the refreshed availability search.
