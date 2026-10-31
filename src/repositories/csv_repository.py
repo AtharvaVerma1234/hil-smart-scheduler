@@ -1,6 +1,9 @@
 """CSV-backed repository for Phase 1."""
 
+import os
 import re
+import tempfile
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +14,9 @@ from src.repositories.base import AbstractHILRepository
 from src.utils.logging_config import get_logger
 
 logger = get_logger(__name__)
+_BOOKING_WRITE_LOCK = threading.Lock()
+_CSV_CACHE: dict[Path, tuple[float, pd.DataFrame]] = {}
+_CSV_CACHE_LOCK = threading.Lock()
 
 
 class CSVHILRepository(AbstractHILRepository):
@@ -35,10 +41,21 @@ class CSVHILRepository(AbstractHILRepository):
         if not path.is_file():
             logger.error("Required CSV is missing: dataset=%s path=%s", name, path)
             raise FileNotFoundError(f"Required HIL data file does not exist: {path}")
+        cache_path = path.resolve()
         try:
-            frame = pd.read_csv(path, dtype=str, keep_default_na=True)
-        except Exception:
-            logger.exception("Failed to parse CSV dataset=%s path=%s", name, path)
+            modified_at = path.stat().st_mtime
+            with _CSV_CACHE_LOCK:
+                cached = _CSV_CACHE.get(cache_path)
+                if cached and cached[0] == modified_at:
+                    return cached[1].copy()
+                try:
+                    frame = pd.read_csv(path, dtype=str, keep_default_na=True)
+                except Exception:
+                    logger.exception("Failed to parse CSV dataset=%s path=%s", name, path)
+                    raise
+                _CSV_CACHE[cache_path] = (path.stat().st_mtime, frame.copy())
+        except OSError:
+            logger.exception("Failed to access CSV dataset=%s path=%s", name, path)
             raise
         logger.info(
             "CSV dataset loaded: dataset=%s path=%s rows=%d columns=%d",
@@ -68,37 +85,58 @@ class CSVHILRepository(AbstractHILRepository):
             return []
         path = self._paths["bookings"]
         logger.info("Appending bookings: requested_count=%d path=%s", len(new_bookings), path)
-        existing = self._read("bookings")
-        numbers = [
-            int(match.group(1))
-            for value in existing.get("Booking_ID", pd.Series(dtype=str)).dropna()
-            if (match := re.fullmatch(r"BK_(\d+)", str(value).strip()))
-        ]
-        next_number = max(numbers, default=0) + 1
-        booking_ids = [f"BK_{next_number + index}" for index in range(len(new_bookings))]
-        rows = []
-        for booking_id, booking in zip(booking_ids, new_bookings):
-            rows.append(
-                {
-                    "Booking_ID": booking_id,
-                    "Rig_ID": booking["Rig_ID"],
-                    "Date": booking["Date"],
-                    "Slot_Start_Time": booking["Slot_Start_Time"],
-                    "Slot_End_Time": booking["Slot_End_Time"],
-                    "Slot_Type": booking["Slot_Type"],
-                    "Booked_By_User": booking["Booked_By_User"],
-                }
-            )
-        updated = pd.concat([existing, pd.DataFrame(rows)], ignore_index=True)
-        try:
-            updated.to_csv(path, index=False)
-        except Exception:
-            logger.exception(
-                "Failed to persist bookings: path=%s attempted_count=%d",
-                path,
-                len(rows),
-            )
-            raise
+        with _BOOKING_WRITE_LOCK:
+            existing = self._read("bookings")
+            numbers = [
+                int(match.group(1))
+                for value in existing.get("Booking_ID", pd.Series(dtype=str)).dropna()
+                if (match := re.fullmatch(r"BK_(\d+)", str(value).strip()))
+            ]
+            next_number = max(numbers, default=0) + 1
+            booking_ids = [
+                f"BK_{next_number + index}" for index in range(len(new_bookings))
+            ]
+            rows = []
+            for booking_id, booking in zip(booking_ids, new_bookings):
+                rows.append(
+                    {
+                        "Booking_ID": booking_id,
+                        "Rig_ID": booking["Rig_ID"],
+                        "Date": booking["Date"],
+                        "Slot_Start_Time": booking["Slot_Start_Time"],
+                        "Slot_End_Time": booking["Slot_End_Time"],
+                        "Slot_Type": booking["Slot_Type"],
+                        "Booked_By_User": booking["Booked_By_User"],
+                    }
+                )
+            updated = pd.concat([existing, pd.DataFrame(rows)], ignore_index=True)
+            temp_path: str | None = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode="w",
+                    encoding="utf-8",
+                    newline="",
+                    dir=path.parent,
+                    prefix=f".{path.name}.",
+                    suffix=".tmp",
+                    delete=False,
+                ) as temp_file:
+                    temp_path = temp_file.name
+                updated.to_csv(temp_path, index=False)
+                os.replace(temp_path, path)
+                with _CSV_CACHE_LOCK:
+                    _CSV_CACHE[path.resolve()] = (path.stat().st_mtime, updated.copy())
+            except Exception:
+                if temp_path and os.path.exists(temp_path):
+                    os.unlink(temp_path)
+                with _CSV_CACHE_LOCK:
+                    _CSV_CACHE.pop(path.resolve(), None)
+                logger.exception(
+                    "Failed to persist bookings: path=%s attempted_count=%d",
+                    path,
+                    len(rows),
+                )
+                raise
         logger.info(
             "Bookings persisted: added_count=%d booking_ids=%s total_rows=%d",
             len(booking_ids),

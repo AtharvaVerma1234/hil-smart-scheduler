@@ -133,6 +133,25 @@ class OllamaProviderTests(unittest.TestCase):
         ):
             provider.respond("Do something", [])
 
+    def test_respond_can_disable_tool_calling_for_a_turn(self) -> None:
+        provider = OllamaProvider("Ask for the duration.")
+        final_response = {
+            "message": {"role": "assistant", "content": "How many hours?"},
+        }
+        with (
+            patch(
+                "src.agent.ollama_provider.get_registered_tools",
+                return_value=[sample_tool],
+            ),
+            patch.object(
+                provider, "_send_chat", return_value=final_response
+            ) as send_chat,
+        ):
+            answer, _ = provider.respond("Find a rig", [], tools=[])
+
+        self.assertEqual(answer, "How many hours?")
+        self.assertEqual(send_chat.call_args.args[1], [])
+
 
 if __name__ == "__main__":
     unittest.main()

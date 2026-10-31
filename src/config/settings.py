@@ -19,7 +19,7 @@ RIG_CAPABILITIES_CSV = DATA_RAW_DIR / "rig_capabilities.csv"
 FEATURE_REQUIREMENTS_CSV = DATA_RAW_DIR / "feature_requirements.csv"
 CIARA_BOOKINGS_CSV = DATA_RAW_DIR / "ciara_bookings.csv"
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash").strip()
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite").strip()
 if not GEMINI_MODEL:
     raise ValueError("GEMINI_MODEL must not be empty.")
 GEMINI_THINKING_BUDGET_RAW = os.environ.get("GEMINI_THINKING_BUDGET", "").strip()

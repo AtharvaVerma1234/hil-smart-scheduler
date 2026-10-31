@@ -5,6 +5,7 @@ from typing import Any, Optional
 
 from src.config.constants import MIN_SLOT_DURATION_HOURS
 from src.repositories.base import AbstractHILRepository
+from src.utils.parsers import resolve_rig_id
 from src.utils.time_utils import duration_hours, extended_windows, parse_clock, week_friday
 from src.utils.logging_config import get_logger
 
@@ -57,10 +58,38 @@ class SlotSchedulerService:
                 shift_end,
             )
             raise ValueError("shift_start must be earlier than shift_end.")
+        rig_rows = self.repository.get_all_rigs()
+        valid_rig_ids = {
+            str(rig_id).strip()
+            for rig_id in rig_rows["Rig_ID"].dropna().astype(str)
+            if str(rig_id).strip()
+        }
+        requested_rig_count = len(rig_ids)
+        normalized_rig_ids = []
+        for raw_rig_id in rig_ids:
+            normalized = self._canonical_rig_id(raw_rig_id, valid_rig_ids)
+            if normalized in valid_rig_ids:
+                normalized_rig_ids.append(normalized)
+            else:
+                logger.warning(
+                    "Ignoring unverified rig ID in availability search: raw_rig_id=%r",
+                    raw_rig_id,
+                )
+        rig_ids = list(dict.fromkeys(normalized_rig_ids))
+        logger.info(
+            "Availability rig IDs validated: requested_count=%d validated_count=%d rigs=%s",
+            requested_rig_count,
+            len(rig_ids),
+            rig_ids,
+        )
         bookings = self.repository.get_bookings().fillna("")
         standard_slots: list[dict[str, Any]] = []
         extended_slots: list[dict[str, Any]] = []
         rig_conflicts: list[dict[str, Any]] = []
+        hours_by_rig = {
+            str(rig): {"standard_hours": 0.0, "extended_hours": 0.0}
+            for rig in rig_ids
+        }
 
         for offset in range((end - start).days + 1):
             current = start + timedelta(days=offset)
@@ -106,18 +135,22 @@ class SlotSchedulerService:
                     for _, row in day_bookings.iterrows()
                     if row.get("Slot_Start_Time") and row.get("Slot_End_Time")
                 ]
-                standard_slots.extend(
-                    self._gaps(
-                        rig, date_text, shift_start, shift_end, busy,
-                        "Standard Shift", min_slot_hours,
-                    )
+                day_standard_slots = self._gaps(
+                    rig, date_text, shift_start, shift_end, busy,
+                    "Standard Shift", min_slot_hours,
+                )
+                standard_slots.extend(day_standard_slots)
+                hours_by_rig[rig]["standard_hours"] += sum(
+                    slot["duration_hrs"] for slot in day_standard_slots
                 )
                 for window_start, window_end, label in extended_windows(shift_start, shift_end):
-                    extended_slots.extend(
-                        self._gaps(
-                            rig, date_text, window_start, window_end, busy,
-                            label, min_slot_hours,
-                        )
+                    day_extended_slots = self._gaps(
+                        rig, date_text, window_start, window_end, busy,
+                        label, min_slot_hours,
+                    )
+                    extended_slots.extend(day_extended_slots)
+                    hours_by_rig[rig]["extended_hours"] += sum(
+                        slot["duration_hrs"] for slot in day_extended_slots
                     )
 
         result = {
@@ -134,6 +167,13 @@ class SlotSchedulerService:
             "total_with_extended_hours": round(
                 sum(slot["duration_hrs"] for slot in standard_slots + extended_slots), 2
             ),
+            "hours_by_rig": {
+                rig: {
+                    "standard_hours": round(hours["standard_hours"], 2),
+                    "extended_hours": round(hours["extended_hours"], 2),
+                }
+                for rig, hours in hours_by_rig.items()
+            },
         }
         logger.info(
             "Availability search completed: search_end=%s standard_slots=%d "
@@ -147,6 +187,12 @@ class SlotSchedulerService:
             len(rig_conflicts),
         )
         return result
+
+    @staticmethod
+    def _canonical_rig_id(
+        rig_id: object, valid_rig_ids: set[str] | list[str] | None = None
+    ) -> str:
+        return resolve_rig_id(rig_id, valid_rig_ids)
 
     @staticmethod
     def _gaps(

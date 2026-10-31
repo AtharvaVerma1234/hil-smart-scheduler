@@ -36,10 +36,11 @@ class OllamaProvider:
         user_message: str,
         history: list[dict[str, Any]],
         benchmark: Any = None,
+        tools: list[Callable[..., Any]] | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         """Return a model response and the updated provider-specific history."""
         messages = [*history, {"role": "user", "content": user_message}]
-        tools = get_registered_tools()
+        tools = get_registered_tools() if tools is None else tools
         tools_by_name = {tool.__name__: tool for tool in tools}
         tool_schemas = [_tool_schema(tool) for tool in tools]
         tool_rounds = 0
