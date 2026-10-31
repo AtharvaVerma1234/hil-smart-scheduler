@@ -7,3 +7,4 @@ logs/
 .streamlit/secrets.toml
 *.txt
 python_bundle_code.py
+PROMPT.md
