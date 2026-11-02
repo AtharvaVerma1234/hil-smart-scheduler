@@ -118,11 +118,16 @@ div[data-testid="stExpander"] { border-color:#3A3D45; border-radius:9px; }
 .stForm [data-testid="stFormSubmitButton"] button:hover {
   color:#F8F8F2; box-shadow:0 0 14px rgba(249,38,114,.35);
 }
+[data-testid="InputInstructions"] {
+    display: none !important;
+    visibility: hidden !important;
+}
 .st-key-right_panel_view_toggle button[kind="primary"] {
   color:#66D9EF; background:#193238; border:1px solid #66D9EF;
   box-shadow:0 0 10px rgba(102,217,239,.28);
 }
-.st-key-ciara_booking_cta button[kind="primary"] {
+.st-key-ciara_booking_cta button[kind="primary"],
+.st-key-modal_ciara_booking_cta button[kind="primary"] {
   color:#F8F8F2; border:1px solid #F92672;
   background:#F92672; box-shadow:0 0 10px rgba(249,38,114,.2);
 }
@@ -147,6 +152,17 @@ div[data-testid="stExpander"] { border-color:#3A3D45; border-radius:9px; }
 .hil-calendar-track { display:flex; flex-direction:column; width:100%; gap:0; }
 .hil-timeline-block { width:100%; box-sizing:border-box; overflow:hidden; border:1px solid; border-radius:4px; padding:2px; color:#F8F8F2; font-size:.58rem; line-height:1.15; text-align:center; }
 .hil-calendar-axis { position:relative; color:#9B9DA5; font-size:.6rem; }
+div[data-testid="stDialog"] > div > div {
+    background: #202226 !important;
+    border: 1px solid #66D9EF !important;
+    box-shadow: 0 0 28px rgba(0, 0, 0, 0.75), 0 0 14px rgba(102, 217, 239, 0.22) !important;
+    border-radius: 14px !important;
+    color: #F8F8F2 !important;
+}
+div[data-testid="stModal"] {
+    backdrop-filter: blur(4px);
+    background-color: rgba(15, 16, 20, 0.72) !important;
+}
 .hil-timeline-block + .hil-timeline-block { border-top-width:0; }
 .hil-breakdown-card { background:#202226; border:1px solid #3A3F47; border-radius:9px; padding:.7rem; margin:.6rem 0; }
 .hil-meta-badges { display:flex; flex-wrap:wrap; gap:.3rem; margin-bottom:.55rem; }
@@ -178,7 +194,9 @@ def main() -> None:
     st.markdown(_MONOKAI_CSS, unsafe_allow_html=True)
     initialize_session_state()
     nav_info = render_top_navbar()
-    left_col, center_col, right_col = st.columns([1.0, 2.25, 1.35], gap="medium")
+    is_collapsed = bool(st.session_state.get("left_sidebar_collapsed", False))
+    col_ratios = [0.22, 2.58, 1.80] if is_collapsed else [1.0, 2.25, 1.35]
+    left_col, center_col, right_col = st.columns(col_ratios, gap="medium")
     with left_col:
         sidebar_info = render_sidebar(left_col, nav_info)
     pending_follow_up = st.session_state.pop("pending_booking_follow_up", None)
@@ -195,6 +213,7 @@ def main() -> None:
             render_chat_slot_selector()
         submitted = render_chat_input()
         if submitted:
+            st.session_state["calendar_modal_open"] = False
             benchmark = start_benchmark(
                 message_characters=len(submitted),
                 provider=LLM_PROVIDER,

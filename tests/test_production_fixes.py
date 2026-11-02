@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pandas as pd
 import streamlit as st
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock
 
 from src.agent import orchestrator
 from src.agent.tools import discovery_tools, scheduling_tools
@@ -24,6 +24,8 @@ from src.ui.components.chat_panel import _highlight_entities
 from src.ui.components.sidebar import (
     _five_active_dates,
     _on_shift_slider_change,
+    _toggle_left_sidebar,
+    render_sidebar,
 )
 
 
@@ -129,6 +131,34 @@ class ProductionRigIdentifierTests(unittest.TestCase):
 
 
 class ProductionUiRenderingTests(unittest.TestCase):
+    def test_collapsed_sidebar_preserves_active_filter_settings(self) -> None:
+        state = SessionState(
+            {
+                "left_sidebar_collapsed": False,
+                "saved_filter_timezone": "Europe/Berlin",
+                "filter_shift_range": ("08:00", "17:30"),
+                "filter_start_date": "2026-10-15",
+                "filter_allow_weekends": True,
+                "filter_include_extended": True,
+                "search_settings": {"existing": "settings"},
+            }
+        )
+        container = MagicMock()
+        with (
+            patch.object(st, "session_state", state),
+            patch.object(st, "context", Mock(timezone="UTC")),
+            patch.object(st, "button"),
+        ):
+            _toggle_left_sidebar()
+            active_filters = render_sidebar(container)
+
+        self.assertTrue(state["left_sidebar_collapsed"])
+        self.assertEqual(active_filters["timezone"], "Europe/Berlin")
+        self.assertEqual(active_filters["shift_start"], "08:00")
+        self.assertEqual(active_filters["shift_end"], "17:30")
+        self.assertEqual(active_filters["simulated_date"], "2026-10-15")
+        self.assertEqual(active_filters["deadline_date"], "2026-10-19")
+
     def test_shift_slider_callback_synchronizes_valid_range(self) -> None:
         state = SessionState({"filter_shift_range_widget": ("08:00", "16:30")})
         with patch.object(st, "session_state", state):
@@ -300,6 +330,109 @@ class ProductionUiRenderingTests(unittest.TestCase):
         self.assertEqual(slot["end_time"], "16:30")
         self.assertEqual(slot["duration_hrs"], 2.5)
         self.assertEqual(state["resize_test_slider"], ("14:00", "16:30"))
+
+    def test_calendar_expand_modal_toggle_and_prefixed_resizer_sync(self) -> None:
+        slot = {
+            "rig_id": "RIG_1",
+            "date": "2026-10-15",
+            "start_time": "14:00",
+            "end_time": "16:00",
+            "orig_start_time": "14:00",
+            "orig_end_time": "18:00",
+        }
+        slot_key = "RIG_1|2026-10-15|14:00|18:00"
+        base_slider_key = slot_picker_table._stable_slider_key(slot_key)
+        modal_slider_key = f"modal_{base_slider_key}"
+        state = {
+            "calendar_modal_open": False,
+            "candidate_slots": [slot],
+            base_slider_key: ("14:00", "16:00"),
+            modal_slider_key: ("14:00", "16:00"),
+        }
+        with patch.object(st, "session_state", state):
+            slot_picker_table._open_calendar_modal()
+            self.assertTrue(state["calendar_modal_open"])
+            slot_picker_table._resize_selected_slot(
+                slot_key,
+                modal_slider_key,
+                30,
+            )
+            slot_picker_table._close_calendar_modal()
+
+        self.assertFalse(state["calendar_modal_open"])
+        self.assertEqual(slot["start_time"], "14:00")
+        self.assertEqual(slot["end_time"], "16:30")
+        self.assertEqual(slot["duration_hrs"], 2.5)
+        self.assertEqual(state[base_slider_key], ("14:00", "16:30"))
+        self.assertEqual(state[modal_slider_key], ("14:00", "16:30"))
+
+    def test_calendar_modal_uses_distinct_booking_footer_container_keys(self) -> None:
+        slot = {
+            "rig_id": "RIG_1",
+            "date": "2026-10-15",
+            "start_time": "14:00",
+            "end_time": "16:00",
+            "orig_start_time": "14:00",
+            "orig_end_time": "18:00",
+        }
+        state = SessionState(
+            {
+                "right_panel_view": "Weekly Calendars",
+                "calendar_modal_open": True,
+                "matched_rigs": [{"rig_id": "RIG_1", "platform": "Vector"}],
+                "candidate_slots": [slot],
+                "selected_slot_keys": ["RIG_1|2026-10-15|14:00|18:00"],
+                "search_settings": {
+                    "start_date": "2026-10-15",
+                    "shift_start": "09:00",
+                    "shift_end": "18:00",
+                    "allow_weekends": False,
+                    "include_extended": False,
+                },
+            }
+        )
+        rendered_container_keys = []
+
+        def make_container(*args, **kwargs):
+            rendered_container_keys.append(kwargs.get("key"))
+            return MagicMock()
+
+        with (
+            patch.object(st, "session_state", state),
+            patch.object(slot_picker_table, "_render_view_toggle"),
+            patch.object(
+                slot_picker_table,
+                "_render_weekly_calendars",
+            ) as render_weekly_calendars,
+            patch.object(st, "container", side_effect=make_container),
+            patch.object(st, "selectbox", return_value="-- Select Slot Type --"),
+            patch.object(st, "button", return_value=False),
+            patch.object(
+                slot_picker_table,
+                "_open_expanded_calendar_dialog",
+                side_effect=lambda user_id: slot_picker_table._render_booking_footer(
+                    user_id,
+                    key_prefix="modal_",
+                ),
+            ),
+        ):
+            slot_picker_table.render_slot_picker("USER_ENG_01")
+
+        self.assertIn("ciara_booking_cta", rendered_container_keys)
+        self.assertIn("modal_ciara_booking_cta", rendered_container_keys)
+        self.assertEqual(
+            rendered_container_keys.count("ciara_booking_cta"),
+            1,
+        )
+        self.assertEqual(
+            rendered_container_keys.count("modal_ciara_booking_cta"),
+            1,
+        )
+        self.assertFalse(state["calendar_modal_open"])
+        render_weekly_calendars.assert_called_once_with(
+            in_modal=False,
+            modal_is_open=True,
+        )
 
 
 class ProductionDurationAndGatekeeperTests(unittest.TestCase):

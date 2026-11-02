@@ -94,16 +94,76 @@ def render_top_navbar() -> dict[str, str]:
     return {"api_key": api_key, "user_id": user_id}
 
 
+def _toggle_left_sidebar() -> None:
+    st.session_state["left_sidebar_collapsed"] = not bool(
+        st.session_state.get("left_sidebar_collapsed", False)
+    )
+
+
 def render_sidebar(
     container: Any = None,
     nav_info: dict[str, str] | None = None,
 ) -> dict[str, str]:
-    """Render schedule filters and return the active credentials/preferences."""
+    """Render schedule filters or collapsed rail and return active preferences."""
     target = st.sidebar if container is None else container
+    detected_tz = getattr(st.context, "timezone", None) or "Asia/Kolkata"
+    collapsed = bool(st.session_state.get("left_sidebar_collapsed", False))
+
+    if collapsed:
+        with target:
+            st.button(
+                "☰ »",
+                key="expand_left_sidebar_button",
+                help="Open Filters sidebar",
+                on_click=_toggle_left_sidebar,
+                use_container_width=True,
+            )
+        saved_shift = st.session_state.get("filter_shift_range", ("09:00", "18:00"))
+        shift_start, shift_end = str(saved_shift[0]), str(saved_shift[1])
+        start_date_text = str(st.session_state.get("filter_start_date", "2026-10-15"))
+        allow_weekends = bool(st.session_state.get("filter_allow_weekends", False))
+        include_extended = bool(st.session_state.get("filter_include_extended", False))
+        try:
+            parsed_start = date.fromisoformat(start_date_text)
+        except ValueError:
+            parsed_start = date(2026, 10, 15)
+            start_date_text = parsed_start.isoformat()
+        end_date_text = _five_active_dates(parsed_start, allow_weekends)[-1].isoformat()
+        timezone = str(st.session_state.get("saved_filter_timezone") or detected_tz)
+        st.session_state.search_settings = {
+            "shift_start": shift_start,
+            "shift_end": shift_end,
+            "start_date": start_date_text,
+            "deadline_date": end_date_text,
+            "include_extended": include_extended,
+            "allow_weekends": allow_weekends,
+        }
+        nav_info = nav_info or {}
+        return {
+            **nav_info,
+            "timezone": timezone,
+            "shift_start": shift_start,
+            "shift_end": shift_end,
+            "simulated_date": start_date_text,
+            "deadline_date": end_date_text,
+        }
+
     with target:
         with st.container(border=True):
-            st.markdown('<div class="hil-filter-heading">☰ Filters</div>', unsafe_allow_html=True)
-            detected_tz = getattr(st.context, "timezone", None) or "Asia/Kolkata"
+            head_left, head_right = st.columns([3.2, 0.9], vertical_alignment="center")
+            with head_left:
+                st.markdown(
+                    '<div class="hil-filter-heading" style="margin:0;">☰ Filters</div>',
+                    unsafe_allow_html=True,
+                )
+            with head_right:
+                st.button(
+                    "«",
+                    key="collapse_left_sidebar_button",
+                    help="Close Filters sidebar",
+                    on_click=_toggle_left_sidebar,
+                    use_container_width=True,
+                )
             timezone_options = list(
                 dict.fromkeys(
                     [
@@ -116,12 +176,19 @@ def render_sidebar(
                     ]
                 )
             )
+            saved_tz = st.session_state.get("saved_filter_timezone") or detected_tz
+            default_tz_index = (
+                timezone_options.index(saved_tz) if saved_tz in timezone_options else 0
+            )
+            if "filter_timezone" not in st.session_state and saved_tz in timezone_options:
+                st.session_state["filter_timezone"] = saved_tz
             timezone = st.selectbox(
                 "Timezone",
                 options=timezone_options,
-                index=0,
+                index=default_tz_index,
                 key="filter_timezone",
             )
+            st.session_state["saved_filter_timezone"] = timezone
 
             saved_shift = st.session_state.get(
                 "filter_shift_range", ("09:00", "18:00")
@@ -137,18 +204,21 @@ def render_sidebar(
             existing_shift_widget = st.session_state.get(
                 "filter_shift_range_widget"
             )
-            if existing_shift_widget is not None and (
+            if (
                 not isinstance(existing_shift_widget, (tuple, list))
                 or len(existing_shift_widget) != 2
                 or existing_shift_widget[0] not in SHIFT_TIME_OPTIONS
                 or existing_shift_widget[1] not in SHIFT_TIME_OPTIONS
             ):
-                st.session_state.pop("filter_shift_range_widget", None)
+                st.session_state["filter_shift_range_widget"] = (
+                    str(saved_shift[0]),
+                    str(saved_shift[1]),
+                )
 
             shift_range = st.select_slider(
                 "Shift timings",
                 options=SHIFT_TIME_OPTIONS,
-                value=(str(saved_shift[0]), str(saved_shift[1])),
+                value=("09:00", "18:00"),
                 key="filter_shift_range_widget",
                 on_change=_on_shift_slider_change,
                 help="Drag the start and end handles to set your working shift window.",

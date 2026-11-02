@@ -189,6 +189,7 @@ def render_chat_slot_selector() -> None:
                 + "_slider"
             )
             st.session_state[slider_key] = (start, end)
+            st.session_state[f"modal_{slider_key}"] = (start, end)
 
 
 def _parse_time_minutes(value: str) -> int:
@@ -224,7 +225,7 @@ def render_chat_input() -> str | None:
         with input_col:
             message = st.text_input(
                 "Message",
-                placeholder="Message HIL Rig Scheduler...",
+                placeholder="e.g., I want to test FEATURE_1 on VEHICLE_PROGRAM_1 for 3 hours...",
                 label_visibility="collapsed",
                 key="chat_message_input",
             )

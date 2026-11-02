@@ -3,6 +3,7 @@
 from contextlib import nullcontext
 from datetime import date, datetime, timedelta
 from html import escape
+import inspect
 import re
 from typing import Any
 
@@ -39,20 +40,42 @@ _STATUS_STYLES = {
 
 def render_slot_picker(user_id: str, container: Any = None) -> None:
     """Render the matched/booking and weekly-calendar right-panel views."""
+    should_open_modal = (
+        st.session_state.get("right_panel_view") == "Weekly Calendars"
+        and bool(st.session_state.get("calendar_modal_open", False))
+    )
     target = nullcontext() if container is None else container
     with target:
         _render_view_toggle()
         right_scroll = st.container(height=360, border=True)
         with right_scroll:
-            if st.session_state.get("right_panel_view", "Matched & Booking") == "Weekly Calendars":
-                _render_weekly_calendars()
+            if (
+                st.session_state.get("right_panel_view", "Matched & Booking")
+                == "Weekly Calendars"
+            ):
+                _render_weekly_calendars(
+                    in_modal=False,
+                    modal_is_open=should_open_modal,
+                )
             else:
                 _render_matched_and_booking()
         _render_booking_footer(user_id)
+    if should_open_modal:
+        st.session_state["calendar_modal_open"] = False
+        _open_expanded_calendar_dialog(user_id)
+
+
+def _open_calendar_modal() -> None:
+    st.session_state["calendar_modal_open"] = True
+
+
+def _close_calendar_modal() -> None:
+    st.session_state["calendar_modal_open"] = False
 
 
 def _set_right_view(view_name: str) -> None:
     st.session_state["right_panel_view"] = view_name
+    st.session_state["calendar_modal_open"] = False
 
 
 def _render_view_toggle() -> None:
@@ -339,14 +362,30 @@ def build_rig_day_timeline(
     return blocks
 
 
-def _render_weekly_calendars() -> None:
-    st.markdown(
-        '<div class="hil-calendar-legend">'
+def _render_weekly_calendars(
+    in_modal: bool = False,
+    modal_is_open: bool = False,
+) -> None:
+    legend_html = (
+        '<div class="hil-calendar-legend" style="text-align:left;margin:0;">'
         '<span style="color:#7CB342">●</span> Available&nbsp;&nbsp;&nbsp; '
         '<span style="color:#2E6BE6">●</span> Booked&nbsp;&nbsp;&nbsp; '
-        '<span style="color:#F92672">●</span> Selected</div>',
-        unsafe_allow_html=True,
+        '<span style="color:#F92672">●</span> Selected</div>'
     )
+    if not in_modal:
+        top_left, top_right = st.columns([2.2, 1.0], vertical_alignment="center")
+        with top_left:
+            st.markdown(legend_html, unsafe_allow_html=True)
+        with top_right:
+            st.button(
+                "⛶ Expand",
+                key="expand_weekly_calendar_btn",
+                help="Open Weekly Calendars in a large floating overlay window",
+                use_container_width=True,
+                on_click=_open_calendar_modal,
+            )
+    else:
+        st.markdown(legend_html, unsafe_allow_html=True)
     rigs = st.session_state.get("matched_rigs", [])
     if not rigs:
         st.caption("Rig recommendations will appear here after discovery.")
@@ -383,8 +422,13 @@ def _render_weekly_calendars() -> None:
                 cal_start,
                 cal_end,
                 bookings,
+                in_modal=in_modal,
             )
-            _render_selected_slot_resizers(rig_id)
+            if in_modal or not modal_is_open:
+                _render_selected_slot_resizers(
+                    rig_id,
+                    key_prefix="modal_" if in_modal else "",
+                )
     target = float(st.session_state.get("target_duration_hours", 0.0))
     selected_hours = sum(_slot_duration(slot) for slot in _selected_slots())
     st.caption(f"Total Selected: {selected_hours:.1f} / {target:.1f} hrs")
@@ -396,9 +440,14 @@ def _render_rig_calendar(
     cal_start: str,
     cal_end: str,
     bookings_df: pd.DataFrame,
+    in_modal: bool = False,
 ) -> None:
     columns = st.columns([0.42, *([1] * len(dates))])
-    total_height = max(22, round((_minutes(cal_end) - _minutes(cal_start)) / 60 * 24))
+    px_per_hour = 32 if in_modal else 24
+    total_height = max(
+        22,
+        round((_minutes(cal_end) - _minutes(cal_start)) / 60 * px_per_hour),
+    )
     labels = []
     for time_label in ("09:00", "12:00", "15:00", "18:00", "20:00"):
         position = (
@@ -428,7 +477,7 @@ def _render_rig_calendar(
         )
         html_blocks = []
         for block in blocks:
-            height = block["height_px"]
+            height = max(22, round(block["duration_hrs"] * px_per_hour))
             if block["status"] == "Selected":
                 text = (
                     f'✓ Selected<br>{block["start_time"]} - {block["end_time"]}'
@@ -458,7 +507,10 @@ def _stable_slider_key(slot_key: str) -> str:
     return f"resize_{sanitized}_slider"
 
 
-def _render_selected_slot_resizers(rig_id: str) -> None:
+def _render_selected_slot_resizers(
+    rig_id: str,
+    key_prefix: str = "",
+) -> None:
     selected = [
         slot
         for slot in _selected_slots()
@@ -466,7 +518,8 @@ def _render_selected_slot_resizers(rig_id: str) -> None:
     ]
     for slot in selected:
         slot_key = _slot_key(slot)
-        slider_key = _stable_slider_key(slot_key)
+        base_slider_key = _stable_slider_key(slot_key)
+        widget_slider_key = f"{key_prefix}{base_slider_key}"
         original_start = _minutes(slot.get("orig_start_time", slot["start_time"]))
         original_end = _minutes(slot.get("orig_end_time", slot["end_time"]))
         options = [
@@ -475,6 +528,8 @@ def _render_selected_slot_resizers(rig_id: str) -> None:
         ]
         if not options or options[-1] != _clock(original_end):
             options.append(_clock(original_end))
+        if len(options) < 2:
+            continue
         current_start = str(slot["start_time"])
         current_end = str(slot["end_time"])
         if current_start not in options:
@@ -486,43 +541,40 @@ def _render_selected_slot_resizers(rig_id: str) -> None:
                 (value for value in options if _minutes(value) > _minutes(current_start)),
                 options[-1],
             )
-        existing_val = st.session_state.get(slider_key)
-        if existing_val is not None and (
-            not isinstance(existing_val, (tuple, list))
-            or len(existing_val) != 2
-            or existing_val[0] not in options
-            or existing_val[1] not in options
-            or _minutes(existing_val[1]) <= _minutes(existing_val[0])
-        ):
-            st.session_state.pop(slider_key, None)
+        if st.session_state.get(widget_slider_key) != (current_start, current_end):
+            st.session_state[widget_slider_key] = (current_start, current_end)
+
+        current_span = _minutes(current_end) - _minutes(current_start)
+        max_span = original_end - original_start
         st.caption(
             f'Resize {slot["rig_id"]} · {slot["date"]} · '
-            f'{slot["orig_start_time"]}–{slot["orig_end_time"]}'
+            f'{slot["orig_start_time"]}–{slot["orig_end_time"]} '
+            f'(Active: {current_start}–{current_end}, {current_span / 60.0:.1f}h)'
         )
         left, slider_col, right = st.columns([0.7, 4, 0.7])
         left.button(
             "−0.5h",
-            key=f"{slider_key}_decrease",
-            disabled=_minutes(current_end) - _minutes(current_start) <= 30,
+            key=f"{widget_slider_key}_decrease",
+            disabled=current_span <= 30,
             on_click=_resize_selected_slot,
-            args=(slot_key, slider_key, -30),
+            args=(slot_key, widget_slider_key, -30),
         )
         with slider_col:
             st.select_slider(
                 "Selected interval",
                 options=options,
-                value=(current_start, current_end),
-                key=slider_key,
+                value=(options[0], options[-1]),
+                key=widget_slider_key,
                 label_visibility="collapsed",
                 on_change=_selected_interval_changed,
-                args=(slot_key, slider_key),
+                args=(slot_key, widget_slider_key),
             )
         right.button(
             "+0.5h",
-            key=f"{slider_key}_increase",
-            disabled=_minutes(current_end) >= original_end,
+            key=f"{widget_slider_key}_increase",
+            disabled=current_span >= max_span,
             on_click=_resize_selected_slot,
-            args=(slot_key, slider_key, 30),
+            args=(slot_key, widget_slider_key, 30),
         )
 
 
@@ -531,22 +583,36 @@ def _selected_interval_changed(slot_key: str, slider_key: str) -> None:
     if not isinstance(selected_range, (tuple, list)) or len(selected_range) != 2:
         return
     start, end = str(selected_range[0]), str(selected_range[1])
+    slot = next(
+        (
+            candidate
+            for candidate in st.session_state.get("candidate_slots", [])
+            if _slot_key(candidate) == slot_key
+        ),
+        None,
+    )
     if _minutes(end) <= _minutes(start):
-        slot = next(
-            (
-                candidate
-                for candidate in st.session_state.get("candidate_slots", [])
-                if _slot_key(candidate) == slot_key
-            ),
-            None,
+        original_start = (
+            _minutes(slot.get("orig_start_time", start)) if slot else _minutes(start)
         )
         original_end = (
             _minutes(slot.get("orig_end_time", end))
             if slot
             else _minutes(start) + 30
         )
-        end = _clock(min(original_end, _minutes(start) + 30))
-        st.session_state[slider_key] = (start, end)
+        if _minutes(start) + 30 <= original_end:
+            end = _clock(_minutes(start) + 30)
+        else:
+            start = _clock(max(original_start, _minutes(end) - 30))
+    updated_range = (start, end)
+    st.session_state[slider_key] = updated_range
+    base_slider_key = _stable_slider_key(slot_key)
+    for target_key in (base_slider_key, f"modal_{base_slider_key}"):
+        if target_key != slider_key:
+            try:
+                st.session_state[target_key] = updated_range
+            except Exception:
+                pass
     st.session_state["_calendar_slider_just_updated"] = True
     _update_slot(slot_key, start, end)
 
@@ -566,13 +632,29 @@ def _resize_selected_slot(
     )
     if slot is None:
         return
+    original_start = _minutes(slot.get("orig_start_time", slot["start_time"]))
     original_end = _minutes(slot.get("orig_end_time", slot["end_time"]))
     start = _minutes(slot["start_time"])
     current_end = _minutes(slot["end_time"])
-    new_end = min(original_end, max(start + 30, current_end + delta_minutes))
-    new_range = (str(slot["start_time"]), _clock(new_end))
+    if delta_minutes < 0:
+        new_start = start
+        new_end = max(start + 30, current_end + delta_minutes)
+    elif current_end + delta_minutes <= original_end:
+        new_start = start
+        new_end = current_end + delta_minutes
+    else:
+        new_end = original_end
+        new_start = max(original_start, start - delta_minutes)
+    new_range = (_clock(new_start), _clock(new_end))
     st.session_state[slider_key] = new_range
     st.session_state[f"{slider_key}_slider"] = new_range
+    base_slider_key = _stable_slider_key(slot_key)
+    for target_key in (base_slider_key, f"modal_{base_slider_key}"):
+        if target_key != slider_key:
+            try:
+                st.session_state[target_key] = new_range
+            except Exception:
+                pass
     st.session_state["_calendar_slider_just_updated"] = True
     _update_slot(slot_key, *new_range)
 
@@ -592,12 +674,13 @@ def _update_slot(slot_key: str, start: str, end: str) -> None:
     st.session_state.pop("candidate_slot_editor", None)
 
 
-def _render_booking_footer(user_id: str) -> None:
+def _render_booking_footer(user_id: str, key_prefix: str = "") -> None:
+    booking_type_key = f"{key_prefix}booking_slot_type"
     pending_type = st.session_state.pop("_pending_booking_slot_type", None)
     if pending_type in SLOT_TYPE_OPTIONS:
-        st.session_state["booking_slot_type"] = pending_type
-    elif "booking_slot_type" not in st.session_state:
-        st.session_state["booking_slot_type"] = (
+        st.session_state[booking_type_key] = pending_type
+    elif booking_type_key not in st.session_state:
+        st.session_state[booking_type_key] = (
             st.session_state.get("selected_slot_type")
             if st.session_state.get("selected_slot_type") in SLOT_TYPE_OPTIONS
             else SLOT_TYPE_OPTIONS[0]
@@ -605,16 +688,16 @@ def _render_booking_footer(user_id: str) -> None:
     selected_type = st.selectbox(
         "Slot Type (Mandatory for Booking)",
         options=SLOT_TYPE_OPTIONS,
-        key="booking_slot_type",
+        key=booking_type_key,
     )
     if selected_type != SLOT_TYPE_OPTIONS[0]:
         st.session_state.selected_slot_type = selected_type
-    with st.container(key="ciara_booking_cta"):
+    with st.container(key=f"{key_prefix}ciara_booking_cta"):
         if st.button(
             "🚀 Confirm & Book in CIARA",
             type="primary",
             use_container_width=True,
-            key="confirm_ciara_booking",
+            key=f"{key_prefix}confirm_ciara_booking",
         ):
             selected = _selected_slots()
             if not selected:
@@ -665,7 +748,41 @@ def _render_booking_footer(user_id: str) -> None:
             st.success(
                 f"Booking confirmed. New Booking IDs: {', '.join(booking_ids)}"
             )
+            st.session_state["calendar_modal_open"] = False
             st.rerun()
+
+
+_dialog_decorator = getattr(
+    st,
+    "dialog",
+    getattr(st, "experimental_dialog", None),
+)
+
+
+def _render_expanded_calendar_modal_body(user_id: str) -> None:
+    _render_weekly_calendars(in_modal=True, modal_is_open=True)
+    _render_booking_footer(user_id, key_prefix="modal_")
+
+
+if _dialog_decorator is not None:
+    _dialog_kwargs: dict[str, Any] = {"width": "large"}
+    try:
+        if "on_dismiss" in inspect.signature(_dialog_decorator).parameters:
+            _dialog_kwargs["on_dismiss"] = "rerun"
+    except (TypeError, ValueError):
+        pass
+
+    @_dialog_decorator(
+        "📅 Weekly Calendars — Expanded View",
+        **_dialog_kwargs,
+    )
+    def _open_expanded_calendar_dialog(user_id: str) -> None:
+        _render_expanded_calendar_modal_body(user_id)
+
+else:
+
+    def _open_expanded_calendar_dialog(user_id: str) -> None:
+        _render_expanded_calendar_modal_body(user_id)
 
 
 def _selected_slots() -> list[dict]:

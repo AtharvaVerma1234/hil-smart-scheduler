@@ -28,6 +28,9 @@ DEFAULTS: dict[str, Any] = {
     "filter_shift_range": ("09:00", "18:00"),
     "filter_start_date": "2026-10-15",
     "filter_end_date": "2026-10-21",
+    "left_sidebar_collapsed": False,
+    "saved_filter_timezone": "Asia/Kolkata",
+    "calendar_modal_open": False,
 }
 
 
@@ -54,6 +57,7 @@ def reset_session_state() -> None:
         "filter_allow_weekends_widget",
         "filter_shift_range",
         "filter_shift_range_widget",
+        "filter_timezone",
         "filter_start_date_picker",
         "filter_end_date_picker",
         "_last_picker_start_date",
